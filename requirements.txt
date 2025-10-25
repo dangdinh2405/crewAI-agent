@@ -3,3 +3,5 @@ crewai[google-genai]
 flask
 uvicorn
 flask_cors
+crewai-tools
+google-generativeai
