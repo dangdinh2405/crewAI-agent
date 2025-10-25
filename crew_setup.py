@@ -129,3 +129,63 @@ def run_crew(data_query: str = "last quarter support data") -> str:
     result = support_analysis_crew.kickoff(inputs={"data_query": data_query})
     # Some Crew versions return a structured object; ensure it's a string:
     return str(result)
+
+def run_agent1(data_query: str = "last quarter support data", feedback: str = "") -> str:
+    """
+    Chạy Agent đầu tiên (Data Analyst) với khả năng feedback
+    """
+    # Tạo task cho agent đầu tiên với feedback nếu có
+    task_description = (
+        "Fetch and analyze the latest customer support interaction data (tickets, feedback, call logs) "
+        "focusing on the last quarter. Identify the top 3-5 recurring issues, quantify their frequency "
+        "and impact (e.g., resolution time, customer sentiment). Use the Customer Support Data Fetcher tool."
+    )
+    
+    if feedback:
+        task_description += f"\n\nUser feedback: {feedback}\nPlease incorporate this feedback into your analysis."
+    
+    analysis_task_with_feedback = Task(
+        description=task_description,
+        expected_output=(
+            "A summary report detailing: Top 3-5 recurring issues with frequency; average resolution times; "
+            "key customer pain points from feedback; notable sentiment trends and agent observations."
+        ),
+        agent=data_analyst,
+    )
+    
+    # Chạy chỉ agent đầu tiên
+    result = analysis_task_with_feedback.execute()
+    return str(result)
+
+def run_agent5(data_query: str = "last quarter support data", 
+               analysis_result: str = "", 
+               optimization_result: str = "",
+               feedback: str = "") -> str:
+    """
+    Chạy Agent thứ 5 (Report Writer) với khả năng feedback
+    """
+    # Tạo task cho agent cuối với feedback nếu có
+    task_description = (
+        "Compile findings and recommendations into a 1-page executive report for the COO with sections: "
+        "1) Critical issues (data points), 2) Process bottlenecks, 3) Actionable recommendations. "
+        "Keep it clear, professional, and easy to scan."
+    )
+    
+    if feedback:
+        task_description += f"\n\nUser feedback: {feedback}\nPlease incorporate this feedback into your report."
+    
+    if analysis_result:
+        task_description += f"\n\nAnalysis results: {analysis_result}"
+    
+    if optimization_result:
+        task_description += f"\n\nOptimization results: {optimization_result}"
+    
+    report_task_with_feedback = Task(
+        description=task_description,
+        expected_output="A structured, concise executive report (max 1 page) with clear headings and bullet points.",
+        agent=report_writer,
+    )
+    
+    # Chạy chỉ agent cuối
+    result = report_task_with_feedback.execute()
+    return str(result)
