@@ -1,6 +1,6 @@
 import os
 from flask import Flask, jsonify, request
-from crew_setup import run_crew, run_agent1, run_agent5
+from crew_setup import run_crew, run_agent1, run_agent2, run_agent3, run_agent4, run_agent5
 from flask_cors import CORS
 
 app = Flask(__name__)  
@@ -49,6 +49,69 @@ def agent1():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+@app.post("/agent2")
+def agent2():
+    """Agent thứ 2 - Process Optimizer"""
+    payload = request.get_json(silent=True) or {}
+    data_query = payload.get("data_query", "")
+    analysis_result = payload.get("analysis_result", "")
+    
+    if not os.getenv("GEMINI_API_KEY"):
+        return jsonify({"error": "Missing GEMINI_API_KEY environment variable on server."}), 500
+
+    try:
+        result = run_agent2(
+            data_query=data_query,
+            analysis_result=analysis_result
+        )
+        return jsonify({"ok": True, "agent": "process_optimizer", "result": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/agent3")
+def agent3():
+    """Agent thứ 3 - Additional Analysis"""
+    payload = request.get_json(silent=True) or {}
+    data_query = payload.get("data_query", "")
+    analysis_result = payload.get("analysis_result", "")
+    optimization_result = payload.get("optimization_result", "")
+    
+    if not os.getenv("GEMINI_API_KEY"):
+        return jsonify({"error": "Missing GEMINI_API_KEY environment variable on server."}), 500
+
+    try:
+        result = run_agent3(
+            data_query=data_query,
+            analysis_result=analysis_result,
+            optimization_result=optimization_result
+        )
+        return jsonify({"ok": True, "agent": "additional_analyst", "result": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/agent4")
+def agent4():
+    """Agent thứ 4 - Quality Assurance"""
+    payload = request.get_json(silent=True) or {}
+    data_query = payload.get("data_query", "")
+    analysis_result = payload.get("analysis_result", "")
+    optimization_result = payload.get("optimization_result", "")
+    additional_insights = payload.get("additional_insights", "")
+    
+    if not os.getenv("GEMINI_API_KEY"):
+        return jsonify({"error": "Missing GEMINI_API_KEY environment variable on server."}), 500
+
+    try:
+        result = run_agent4(
+            data_query=data_query,
+            analysis_result=analysis_result,
+            optimization_result=optimization_result,
+            additional_insights=additional_insights
+        )
+        return jsonify({"ok": True, "agent": "quality_assurance", "result": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.post("/agent5")
 def agent5():
     """Agent thứ 5 - Report Writer"""
@@ -56,6 +119,8 @@ def agent5():
     data_query = payload.get("data_query", "")
     analysis_result = payload.get("analysis_result", "")
     optimization_result = payload.get("optimization_result", "")
+    additional_insights = payload.get("additional_insights", "")
+    qa_result = payload.get("qa_result", "")
     feedback = payload.get("feedback", "")
     
     if not os.getenv("GEMINI_API_KEY"):
@@ -66,6 +131,8 @@ def agent5():
             data_query=data_query,
             analysis_result=analysis_result,
             optimization_result=optimization_result,
+            additional_insights=additional_insights,
+            qa_result=qa_result,
             feedback=feedback
         )
         return jsonify({"ok": True, "agent": "report_writer", "result": result})

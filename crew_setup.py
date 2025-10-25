@@ -162,9 +162,135 @@ def run_agent1(data_query: str = "last quarter support data", feedback: str = ""
 
     return str(result)
 
+def run_agent2(data_query: str = "last quarter support data", 
+               analysis_result: str = "") -> str:
+    """
+    Chạy Agent thứ 2 (Process Optimizer)
+    """
+    task_description = (
+        "Based on the data analysis report, identify the primary bottlenecks in the support processes "
+        "contributing to the identified issues (especially the top recurring ones). Propose 2-3 concrete, "
+        "actionable process improvements with impact and ease-of-implementation in mind."
+    )
+    
+    if analysis_result:
+        task_description += f"\n\nAnalysis results: {analysis_result}"
+    
+    optimization_task = Task(
+        description=task_description,
+        expected_output=(
+            "A concise list linking main bottlenecks to key problems, plus 2-3 specific, actionable recommendations."
+        ),
+        agent=process_optimizer,
+    )
+    
+    result = Crew(
+        agents=[process_optimizer],
+        tasks=[optimization_task],
+        process=Process.sequential
+    ).kickoff(inputs={"data_query": task_description})
+    
+    return str(result)
+
+def run_agent3(data_query: str = "last quarter support data", 
+               analysis_result: str = "",
+               optimization_result: str = "") -> str:
+    """
+    Chạy Agent thứ 3 (Additional Analysis)
+    """
+    # Tạo một agent bổ sung cho phân tích sâu hơn
+    additional_analyst = Agent(
+        role="Additional Data Analyst",
+        goal="Provide deeper insights and cross-reference analysis results with industry benchmarks.",
+        backstory=(
+            "You are a senior data analyst with expertise in customer support metrics and industry standards. "
+            "You excel at providing additional context and benchmarking against industry best practices."
+        ),
+        verbose=False,
+        allow_delegation=False,
+        llm=gemini_llm,
+    )
+    
+    task_description = (
+        "Based on the analysis and optimization recommendations, provide additional insights including: "
+        "1) Industry benchmark comparisons, 2) Risk assessment of proposed changes, "
+        "3) Implementation timeline recommendations, 4) Success metrics to track."
+    )
+    
+    if analysis_result:
+        task_description += f"\n\nAnalysis results: {analysis_result}"
+    
+    if optimization_result:
+        task_description += f"\n\nOptimization results: {optimization_result}"
+    
+    additional_task = Task(
+        description=task_description,
+        expected_output="Additional insights with industry benchmarks, risk assessment, and implementation guidance.",
+        agent=additional_analyst,
+    )
+    
+    result = Crew(
+        agents=[additional_analyst],
+        tasks=[additional_task],
+        process=Process.sequential
+    ).kickoff(inputs={"data_query": task_description})
+    
+    return str(result)
+
+def run_agent4(data_query: str = "last quarter support data", 
+               analysis_result: str = "",
+               optimization_result: str = "",
+               additional_insights: str = "") -> str:
+    """
+    Chạy Agent thứ 4 (Quality Assurance)
+    """
+    # Tạo một agent cho quality assurance
+    quality_assurance = Agent(
+        role="Quality Assurance Specialist",
+        goal="Review and validate all analysis results, ensuring accuracy and completeness.",
+        backstory=(
+            "You are a quality assurance specialist with expertise in data validation and process review. "
+            "You ensure all recommendations are practical, measurable, and aligned with business objectives."
+        ),
+        verbose=False,
+        allow_delegation=False,
+        llm=gemini_llm,
+    )
+    
+    task_description = (
+        "Review and validate all previous analysis results. Ensure: "
+        "1) Data accuracy and completeness, 2) Recommendation feasibility, "
+        "3) Alignment with business objectives, 4) Risk mitigation strategies."
+    )
+    
+    if analysis_result:
+        task_description += f"\n\nAnalysis results: {analysis_result}"
+    
+    if optimization_result:
+        task_description += f"\n\nOptimization results: {optimization_result}"
+    
+    if additional_insights:
+        task_description += f"\n\nAdditional insights: {additional_insights}"
+    
+    qa_task = Task(
+        description=task_description,
+        expected_output="Quality assurance report with validation results and final recommendations.",
+        agent=quality_assurance,
+    )
+    
+    result = Crew(
+        agents=[quality_assurance],
+        tasks=[qa_task],
+        process=Process.sequential
+    ).kickoff(inputs={"data_query": task_description})
+    
+    return str(result)
+
 def run_agent5(data_query: str = "last quarter support data", 
                analysis_result: str = "", 
                optimization_result: str = "",
+               additional_insights: str = "",
+               qa_result: str = "",
                feedback: str = "") -> str:
     """
     Chạy Agent thứ 5 (Report Writer) với khả năng feedback
@@ -184,6 +310,12 @@ def run_agent5(data_query: str = "last quarter support data",
     
     if optimization_result:
         task_description += f"\n\nOptimization results: {optimization_result}"
+    
+    if additional_insights:
+        task_description += f"\n\nAdditional insights: {additional_insights}"
+    
+    if qa_result:
+        task_description += f"\n\nQuality assurance results: {qa_result}"
     
     report_task_with_feedback = Task(
         description=task_description,
