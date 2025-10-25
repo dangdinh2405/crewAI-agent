@@ -154,7 +154,12 @@ def run_agent1(data_query: str = "last quarter support data", feedback: str = ""
     )
     
     # Chạy chỉ agent đầu tiên
-    result = analysis_task_with_feedback.execute()
+    result = Crew(
+        agents=[data_analyst],
+        tasks=[analysis_task_with_feedback],
+        process=Process.sequential
+    ).kickoff(inputs={"data_query": task_description})
+
     return str(result)
 
 def run_agent5(data_query: str = "last quarter support data", 
@@ -187,5 +192,10 @@ def run_agent5(data_query: str = "last quarter support data",
     )
     
     # Chạy chỉ agent cuối
-    result = report_task_with_feedback.execute()
+    result = Crew(
+        agents=[report_writer],
+        tasks=[report_task_with_feedback],
+        process=Process.sequential
+    ).kickoff(inputs={"data_query": task_description})
+    
     return str(result)
