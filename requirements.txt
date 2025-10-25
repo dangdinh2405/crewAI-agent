@@ -5,3 +5,5 @@ uvicorn
 flask_cors
 crewai-tools
 google-generativeai
+matplotlib
+RapidFuzz
