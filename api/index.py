@@ -1,8 +1,16 @@
 import os
 from flask import Flask, jsonify, request
 from crew_setup import run_crew, run_agent1, run_agent5
+from flask_cors import CORS
 
-app = Flask(__name__)
+app = Flask(__name__)  
+
+# CHỈ cho phép frontend của bạn
+CORS(app,
+     resources={r"/*": {
+         "origins": ["https://insurechat-five.vercel.app"],
+         "supports_credentials": True
+     }})
 
 @app.get("/")
 def health():

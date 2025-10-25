@@ -1,3 +1,5 @@
 qdrant_client
 crewai[google-genai]
 flask
+uvicorn
+flask_cors
