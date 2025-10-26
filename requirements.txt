@@ -7,3 +7,4 @@ crewai-tools
 google-generativeai
 matplotlib
 RapidFuzz
+"Flask[async]"

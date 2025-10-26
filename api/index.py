@@ -22,6 +22,7 @@ from difflib import get_close_matches
 from rapidfuzz import fuzz, process
 from jinja2 import Environment, FileSystemLoader, select_autoescape, Template
 from dotenv import load_dotenv
+import json
 load_dotenv()
 
 # WeasyPrint is optional on Windows because it requires native GTK/GObject libs
@@ -1738,7 +1739,8 @@ def health():
 
 @app.post("/run")
 def http_run():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_data(as_text = True) or {}
+    payload = json.loads(payload)
     data_query = payload.get("data_query", "")
     try:
         report = run_crew(data_query=data_query)
@@ -1749,7 +1751,8 @@ def http_run():
 
 @app.post("/agent1")
 def http_agent1():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_data(as_text = True) or {}
+    payload = json.loads(payload)
     data_query = payload.get("data_query", "")
     feedback = payload.get("feedback")
     try:
@@ -1761,7 +1764,8 @@ def http_agent1():
 
 @app.post("/agent2")
 def http_agent2():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_data(as_text = True) or {}
+    payload = json.loads(payload)
     data_query = payload.get("data_query", "")
     analysis_result = payload.get("analysis_result")
     try:
@@ -1773,7 +1777,8 @@ def http_agent2():
 
 @app.post("/agent3")
 def http_agent3():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_data(as_text = True) or {}
+    payload = json.loads(payload)
     data_query = payload.get("data_query", "")
     analysis_result = payload.get("analysis_result")
     optimization_result = payload.get("optimization_result")
@@ -1786,7 +1791,8 @@ def http_agent3():
 
 @app.post("/agent4")
 def http_agent4():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_data(as_text = True) or {}
+    payload = json.loads(payload)
     data_query = payload.get("data_query", "")
     analysis_result = payload.get("analysis_result")
     optimization_result = payload.get("optimization_result")
@@ -1800,7 +1806,8 @@ def http_agent4():
 
 @app.post("/agent5")
 def http_agent5():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_data(as_text = True) or {}
+    payload = json.loads(payload)
     data_query = payload.get("data_query", "")
     analysis_result = payload.get("analysis_result")
     optimization_result = payload.get("optimization_result")
