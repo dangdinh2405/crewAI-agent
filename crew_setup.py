@@ -23,6 +23,8 @@ from rapidfuzz import fuzz, process
 from jinja2 import Environment, FileSystemLoader, select_autoescape, Template
 from dotenv import load_dotenv
 import json as js
+from pathlib import Path
+import markdown
 load_dotenv()
 
 # WeasyPrint is optional on Windows because it requires native GTK/GObject libs
@@ -1962,9 +1964,17 @@ def run_agent5(data_query: str = "", analysis_result: str = "", optimization_res
     # Run evaluator first
     eval_out = asyncio.run(handle_evaluator(ctx))
     
-    # Add evaluator output to context for report generator
+    # Add evaluator output to context for visualizer and report generator
     if isinstance(eval_out, dict):
         agent_outputs["Evaluator"] = eval_out
+        ctx["agent_outputs"] = agent_outputs
+
+    # Run visualizer
+    visualizer_out = asyncio.run(handle_visualizer(ctx))
+    
+    # Add visualizer output to context for report generator
+    if isinstance(visualizer_out, dict):
+        agent_outputs["Visualizer"] = visualizer_out
         ctx["agent_outputs"] = agent_outputs
 
     # Then run report generator
@@ -1974,10 +1984,12 @@ def run_agent5(data_query: str = "", analysis_result: str = "", optimization_res
         # Return combined output
         return json.dumps({
             "evaluator": eval_out,
+            "visualizer": visualizer_out,
             "report": report_out
         }, ensure_ascii=False, default=str)
     except Exception:
         return str({
             "evaluator": eval_out,
+            "visualizer": visualizer_out,
             "report": report_out
         })
