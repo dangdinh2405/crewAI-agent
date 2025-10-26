@@ -24,7 +24,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape, Template
 from dotenv import load_dotenv
 import json as js
 from pathlib import Path
-import markdown
+from markdown import markdown
 load_dotenv()
 
 # WeasyPrint is optional on Windows because it requires native GTK/GObject libs
@@ -114,7 +114,7 @@ serper_tool = SerperDevTool(api_key=SERPER_API_KEY)
 scrape_tool = ScrapeWebsiteTool()
 
 # Tạo folder output nếu chưa tồn tại
-output_dir = "./outputs"
+output_dir = "./outputs/images"
 os.makedirs(output_dir, exist_ok=True)
 
 async def _call_tool_flexible(tool, *a, **kw):
@@ -937,7 +937,6 @@ async def handle_evaluator(context: Dict[str, Any]) -> Dict[str, Any]:
     Evaluator: combine market_prices, company_products, web insights and structured_request
     Returns a dict matching EvaluatorResult schema.
     """
-    print(context)
     outputs = context.get("agent_outputs", {})
 
     # 1) Extract inputs from context (support multiple naming variants)
@@ -1191,8 +1190,14 @@ async def handle_visualizer(context: Dict[str, Any]) -> Dict[str, Any]:
     """
     Agent 6: Visualizer
     Input: EvaluatorResult (dict/JSON)
-    Output: Paths to generated charts
+    Output: Paths to generated charts (absolute or relative paths usable by the report)
     """
+    import os
+    from datetime import datetime
+    import matplotlib
+    matplotlib.use("Agg")  # headless backend
+    import matplotlib.pyplot as plt
+
     outputs = context.get("agent_outputs", {})
     eval_res = outputs.get("Evaluator") or context.get("session_input", {}).get("evaluator_result")
 
@@ -1203,6 +1208,7 @@ async def handle_visualizer(context: Dict[str, Any]) -> Dict[str, Any]:
         "generated_at": datetime.utcnow().isoformat()
     }
 
+    # Parse EvaluatorResult
     if isinstance(eval_res, EvaluatorResult):
         result = eval_res
     else:
@@ -1212,23 +1218,28 @@ async def handle_visualizer(context: Dict[str, Any]) -> Dict[str, Any]:
             artifacts["error"] = f"EVALUATOR_RESULT_INVALID: {e}"
             return artifacts
 
-    os.makedirs(output_dir, exist_ok=True)
+    # ✅ define output_dir (khớp với nơi mà Report Generator sẽ đọc)
+    output_dir = os.path.join(".", "outputs", "images")
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except Exception as e:
+        artifacts["error"] = f"MAKE_OUTPUT_DIR_FAILED: {e}"
+        return artifacts
 
     # --- 1) Price Comparison Chart ---
     try:
         fig, ax = plt.subplots()
         labels = ["Company Price", "Recommended Price", "Market Median"]
         values = [
-            result.company.current_price if result.company else 0,
-            result.recommended_price or 0,
-            result.market_summary.market_median or 0
+            (result.company.current_price if result.company else 0) or 0,
+            (result.recommended_price or 0),
+            (getattr(result, "market_summary", None).market_median if getattr(result, "market_summary", None) else 0) or 0,
         ]
-        colors = ["blue", "green", "orange"]
-        ax.bar(labels, values, color=colors)
+        ax.bar(labels, values)
         ax.set_ylabel("Annual Price (VND)")
         ax.set_title("Price Comparison: Company vs Recommendation vs Market")
 
-        price_chart_path = os.path.join(output_dir, f"price_chart_{datetime.utcnow().timestamp()}.png")
+        price_chart_path = os.path.join(output_dir, f"price_{datetime.utcnow().timestamp():.0f}.png")
         fig.savefig(price_chart_path, bbox_inches="tight")
         plt.close(fig)
         artifacts["price_chart_path"] = price_chart_path
@@ -1237,16 +1248,17 @@ async def handle_visualizer(context: Dict[str, Any]) -> Dict[str, Any]:
 
     # --- 2) Benefit Change Chart ---
     try:
-        if result.benefits_to_add or result.benefits_to_remove:
+        adds = list(getattr(result, "benefits_to_add", []) or [])
+        rems = list(getattr(result, "benefits_to_remove", []) or [])
+        if adds or rems:
             fig, ax = plt.subplots()
-            labels = [f"+ {b}" for b in result.benefits_to_add] + [f"- {b}" for b in result.benefits_to_remove]
+            labels = [f"+ {b}" for b in adds] + [f"- {b}" for b in rems]
             values = [1] * len(labels)
-            colors = ["green"] * len(result.benefits_to_add) + ["red"] * len(result.benefits_to_remove)
-            ax.barh(labels, values, color=colors)
+            ax.barh(labels, values)
             ax.set_xlabel("Change Count")
             ax.set_title("Benefit Adjustments")
 
-            benefit_chart_path = os.path.join(output_dir, f"benefit_chart_{datetime.utcnow().timestamp()}.png")
+            benefit_chart_path = os.path.join(output_dir, f"benefit_{datetime.utcnow().timestamp():.0f}.png")
             fig.savefig(benefit_chart_path, bbox_inches="tight")
             plt.close(fig)
             artifacts["benefit_diff_chart_path"] = benefit_chart_path
@@ -1255,16 +1267,21 @@ async def handle_visualizer(context: Dict[str, Any]) -> Dict[str, Any]:
 
     # --- 3) Alternatives Chart ---
     try:
-        if result.alternatives:
+        alts = getattr(result, "alternatives", []) or []
+        if alts:
+            # hỗ trợ cả object lẫn dict
+            def get_field(x, name, default=None):
+                return getattr(x, name, x.get(name, default) if isinstance(x, dict) else default)
+
+            labels = [get_field(alt, "action", "N/A") for alt in alts]
+            values = [get_field(alt, "impact_currency", 0) for alt in alts]
+
             fig, ax = plt.subplots()
-            labels = [alt["action"] for alt in result.alternatives]
-            values = [alt["impact_currency"] for alt in result.alternatives]
-            colors = ["green" if v >= 0 else "red" for v in values]
-            ax.bar(labels, values, color=colors)
+            ax.bar(labels, values)
             ax.set_ylabel("Impact (VND)")
             ax.set_title("Alternative Pricing Scenarios")
 
-            alt_chart_path = os.path.join(output_dir, f"alternatives_chart_{datetime.utcnow().timestamp()}.png")
+            alt_chart_path = os.path.join(output_dir, f"alts_{datetime.utcnow().timestamp():.0f}.png")
             fig.savefig(alt_chart_path, bbox_inches="tight")
             plt.close(fig)
             artifacts["alternatives_chart_path"] = alt_chart_path
@@ -1274,7 +1291,8 @@ async def handle_visualizer(context: Dict[str, Any]) -> Dict[str, Any]:
     artifacts["generated_at"] = datetime.utcnow().isoformat()
     return VisualizationArtifacts(**artifacts).model_dump()
 
-# Agent 7 - Report Generator
+# Agent 7
+
 async def handle_report_generator(context: Dict[str, Any], agent_llm=None) -> Dict[str, Any]:
     """
     Agent 7: Compile structured request, evaluator result, and visualization charts into HTML/MD/PDF report.
@@ -1828,7 +1846,7 @@ def run_agent1(data_query: str = "", feedback: str = "") -> str:
     crew, shared_llm = _get_shared_crew_and_llm()
     ctx = {"session_input": {"text": data_query}}
     if feedback:
-        ctx["session_input"]["feedback"] = feedback
+        ctx["session_input"]["text"] += feedback
     ctx["llm"] = shared_llm
     out = asyncio.run(handle_nlu(ctx))
     try:
@@ -1962,24 +1980,26 @@ def run_agent5(data_query: str = "", analysis_result: str = "", optimization_res
         ctx["feedback"] = feedback
 
     # Run evaluator first
+    print(ctx)
     eval_out = asyncio.run(handle_evaluator(ctx))
     
     # Add evaluator output to context for visualizer and report generator
-    if isinstance(eval_out, dict):
-        agent_outputs["Evaluator"] = eval_out
-        ctx["agent_outputs"] = agent_outputs
-
+    # if isinstance(eval_out, dict):
+    agent_outputs["Evaluator"] = eval_out
+    ctx["agent_outputs"] = agent_outputs
+    print()
+    print(ctx)
     # Run visualizer
     visualizer_out = asyncio.run(handle_visualizer(ctx))
     
     # Add visualizer output to context for report generator
-    if isinstance(visualizer_out, dict):
-        agent_outputs["Visualizer"] = visualizer_out
-        ctx["agent_outputs"] = agent_outputs
+    # if isinstance(visualizer_out, dict):
+    agent_outputs["Visualizer"] = visualizer_out
+    ctx["agent_outputs"] = agent_outputs
 
     # Then run report generator
-    report_out = asyncio.run(handle_report_generator(ctx))
-    
+    report_out = asyncio.run(handle_report_generator(ctx, agent_llm=shared_llm))
+    print(1)
     try:
         # Return combined output
         return json.dumps({
@@ -1987,7 +2007,8 @@ def run_agent5(data_query: str = "", analysis_result: str = "", optimization_res
             "visualizer": visualizer_out,
             "report": report_out
         }, ensure_ascii=False, default=str)
-    except Exception:
+    except Exception as e:
+        print(e)
         return str({
             "evaluator": eval_out,
             "visualizer": visualizer_out,

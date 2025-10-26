@@ -1,11 +1,13 @@
 import os
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory, abort
 from crew_setup import run_crew, run_agent1, run_agent2, run_agent3, run_agent4, run_agent5
 from flask_cors import CORS
 import json
 import time
+from pathlib import Path
 
 app = Flask(__name__)  
+OUTPUTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "outputs"))
 
 # CHỈ cho phép frontend của bạn
 CORS(app,
@@ -139,6 +141,21 @@ def agent5():
             feedback=feedback
         )
         return jsonify({"ok": True, "agent": "report_writer", "result": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/outputs/<path:filename>")
+def get_output_file(filename: str):
+    try:
+        # Resolve and ensure the requested file is inside the outputs directory
+        requested_path = Path(OUTPUTS_DIR) / filename
+        resolved_requested = requested_path.resolve()
+        resolved_outputs = Path(OUTPUTS_DIR).resolve()
+        if not str(resolved_requested).startswith(str(resolved_outputs)) or not resolved_requested.is_file():
+            return jsonify({"ok": False, "error": "File not found"}), 404
+
+        # send_from_directory handles proper headers; filename is relative to OUTPUTS_DIR
+        return send_from_directory(resolved_outputs, filename)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
