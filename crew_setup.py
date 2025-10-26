@@ -183,7 +183,7 @@ async def _call_tool_flexible(tool, *a, **kw):
 
 #     return gemini_llm
 
-def get_gemini_llm(model_name="gemini-2.0-flash-lite"):
+def get_gemini_llm(model_name="gemini-2.5-flash-lite"):
     """
     Returns a minimal LLM wrapper object compatible with CrewAI agent.llm usage.
     We only define a 'run' method because handler functions usually call .run(prompt).
@@ -935,7 +935,7 @@ async def handle_evaluator(context: Dict[str, Any]) -> Dict[str, Any]:
     Evaluator: combine market_prices, company_products, web insights and structured_request
     Returns a dict matching EvaluatorResult schema.
     """
-
+    print(context)
     outputs = context.get("agent_outputs", {})
 
     # 1) Extract inputs from context (support multiple naming variants)
@@ -1184,89 +1184,294 @@ async def handle_visualizer(context: Dict[str, Any]) -> Dict[str, Any]:
 
     artifacts["generated_at"] = datetime.utcnow().isoformat()
     return artifacts
-
-# Agent 7 - Report Generator
-async def handle_report_generator(context: Dict[str, Any]) -> Dict[str, Any]:
+# Agent 6 - Visualizer
+async def handle_visualizer(context: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Agent 7: Combine outputs → Generate final business report (HTML + MD).
+    Agent 6: Visualizer
+    Input: EvaluatorResult (dict/JSON)
+    Output: Paths to generated charts
     """
     outputs = context.get("agent_outputs", {})
+    eval_res = outputs.get("Evaluator") or context.get("session_input", {}).get("evaluator_result")
 
-    sr_data = outputs.get("NLU", {}).get("structured_request") or {}
+    artifacts = {
+        "price_chart_path": None,
+        "benefit_diff_chart_path": None,
+        "alternatives_chart_path": None,
+        "generated_at": datetime.utcnow().isoformat()
+    }
+
+    if isinstance(eval_res, EvaluatorResult):
+        result = eval_res
+    else:
+        try:
+            result = EvaluatorResult(**eval_res)
+        except Exception as e:
+            artifacts["error"] = f"EVALUATOR_RESULT_INVALID: {e}"
+            return artifacts
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # --- 1) Price Comparison Chart ---
+    try:
+        fig, ax = plt.subplots()
+        labels = ["Company Price", "Recommended Price", "Market Median"]
+        values = [
+            result.company.current_price if result.company else 0,
+            result.recommended_price or 0,
+            result.market_summary.market_median or 0
+        ]
+        colors = ["blue", "green", "orange"]
+        ax.bar(labels, values, color=colors)
+        ax.set_ylabel("Annual Price (VND)")
+        ax.set_title("Price Comparison: Company vs Recommendation vs Market")
+
+        price_chart_path = os.path.join(output_dir, f"price_chart_{datetime.utcnow().timestamp()}.png")
+        fig.savefig(price_chart_path, bbox_inches="tight")
+        plt.close(fig)
+        artifacts["price_chart_path"] = price_chart_path
+    except Exception as e:
+        artifacts["price_chart_error"] = str(e)
+
+    # --- 2) Benefit Change Chart ---
+    try:
+        if result.benefits_to_add or result.benefits_to_remove:
+            fig, ax = plt.subplots()
+            labels = [f"+ {b}" for b in result.benefits_to_add] + [f"- {b}" for b in result.benefits_to_remove]
+            values = [1] * len(labels)
+            colors = ["green"] * len(result.benefits_to_add) + ["red"] * len(result.benefits_to_remove)
+            ax.barh(labels, values, color=colors)
+            ax.set_xlabel("Change Count")
+            ax.set_title("Benefit Adjustments")
+
+            benefit_chart_path = os.path.join(output_dir, f"benefit_chart_{datetime.utcnow().timestamp()}.png")
+            fig.savefig(benefit_chart_path, bbox_inches="tight")
+            plt.close(fig)
+            artifacts["benefit_diff_chart_path"] = benefit_chart_path
+    except Exception as e:
+        artifacts["benefit_chart_error"] = str(e)
+
+    # --- 3) Alternatives Chart ---
+    try:
+        if result.alternatives:
+            fig, ax = plt.subplots()
+            labels = [alt["action"] for alt in result.alternatives]
+            values = [alt["impact_currency"] for alt in result.alternatives]
+            colors = ["green" if v >= 0 else "red" for v in values]
+            ax.bar(labels, values, color=colors)
+            ax.set_ylabel("Impact (VND)")
+            ax.set_title("Alternative Pricing Scenarios")
+
+            alt_chart_path = os.path.join(output_dir, f"alternatives_chart_{datetime.utcnow().timestamp()}.png")
+            fig.savefig(alt_chart_path, bbox_inches="tight")
+            plt.close(fig)
+            artifacts["alternatives_chart_path"] = alt_chart_path
+    except Exception as e:
+        artifacts["alternatives_chart_error"] = str(e)
+
+    artifacts["generated_at"] = datetime.utcnow().isoformat()
+    return VisualizationArtifacts(**artifacts).model_dump()
+
+# Agent 7 - Report Generator
+async def handle_report_generator(context: Dict[str, Any], agent_llm=None) -> Dict[str, Any]:
+    """
+    Agent 7: Compile structured request, evaluator result, and visualization charts into HTML/MD/PDF report.
+    Enhanced version: includes CSS styling, structured tables, LLM narrative with retry/delay for quota limits.
+    """
+    import os
+    from datetime import datetime
+    import asyncio
+
+    outputs = context.get("agent_outputs", {})
+
+    nlp_out = outputs.get("NLU", {})
+    sr_data = nlp_out.get("structured_request", {})
     ev_data = outputs.get("Evaluator", {}) or outputs.get("evaluator_result") or {}
     vis_data = outputs.get("Visualizer", {}) or outputs.get("visualization_artifacts") or {}
 
-    # Safe Pydantic parsing
+    # --- Safe parsing ---
     try:
-        sr = InsuranceRequest(**sr_data) if isinstance(sr_data, dict) else None
+        sr = InsuranceRequest(**sr_data) if sr_data else None
     except Exception:
         sr = None
 
-    try:
-        ev = EvaluatorResult(**ev_data) if isinstance(ev_data, dict) else None
-    except Exception:
-        ev = None
+    if isinstance(ev_data, EvaluatorResult):
+        ev = ev_data
+    else:
+        try:
+            ev = EvaluatorResult(**ev_data)
+        except Exception:
+            ev = None
 
     try:
-        vis = VisualizationArtifacts(**vis_data) if isinstance(vis_data, dict) else None
+        vis = VisualizationArtifacts(**vis_data) if vis_data else None
     except Exception:
         vis = None
 
-    # Generate report narrative
+    # --- Narrative via LLM with delay & retry per feature ---
     narrative = "Không có dữ liệu đầy đủ để tạo phân tích."
-    llm = context.get("llm")
+    llm = agent_llm or context.get("llm")
+
     if sr and ev and llm:
-        summary_prompt = f"""
-Bạn là chuyên gia bảo hiểm cao cấp. Hãy viết phần phân tích ngắn gọn & dễ hiểu.
-Dữ liệu khách hàng:
-{sr.model_dump_json(indent=2)}
+        # tạo prompt chi tiết dựa trên từng đặc tính
+        summary_prompt = f"""Bạn là chuyên gia bảo hiểm cao cấp. Viết phân tích chi tiết & dễ hiểu về báo cáo giá bảo hiểm.
+    Dữ liệu khách hàng:
+    - Policy Type: {sr.policy_type}
+    - Age: {sr.customer_profile.age}
+    - Gender: {sr.customer_profile.gender}
+    - Benefits: {', '.join(sr.benefits)}
+    - Price Hint: {sr.price_hint}
 
-Kết quả định giá:
-{ev.model_dump_json(indent=2)}
+    Kết quả định giá:
+    - Company: {ev.company.name if ev.company else 'N/A'}
+    - Current Price: {ev.company.current_price if ev.company else 'N/A'} VND
+    - Recommended Price: {ev.recommended_price} VND
+    - Change Amount: {ev.change_amount:+} VND
+    - Change Percent: {ev.change_pct:+.2f}%
+    - Price Direction: {ev.price_direction}
+    - Benefits to Add: {', '.join(ev.benefits_to_add) if ev.benefits_to_add else 'None'}
+    - Benefits to Remove: {', '.join(ev.benefits_to_remove) if ev.benefits_to_remove else 'None'}
+    - Alternatives:
+    """
+        # if ev.alternatives:
+        #     for alt in ev.alternatives:
+        #         summary_prompt += f"  - Action: {alt.action}, Detail: {alt.detail}, Impact: {getattr(alt,'impact_currency',0):+,} VND ({getattr(alt,'impact_pct',0):+.2f}%)\n"
 
-Viết nội dung giải thích tại sao giá đề xuất hợp lý và gợi ý hành động tiếp theo.
-"""
-        try:
-            if hasattr(llm, "predict_async"):
-                narrative = await llm.predict_async(summary_prompt)
-            else:
-                import asyncio
-                narrative = await asyncio.to_thread(llm.predict, summary_prompt)
-        except Exception as e:
-            narrative = f"LLM generation failed: {e}"
+        summary_prompt += """
+    Hãy viết nội dung giải thích thành dạng Markdown: tại sao giá đề xuất hợp lý, gợi ý hành động tiếp theo cho khách hàng, và tóm tắt chi tiết từng trường dữ liệu.
+    """
 
-    # Create HTML report
+        # --- Retry logic with dynamic delay for quota limits ---
+        max_retries = 10  # tăng số lần thử
+        narrative_done = False
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                await asyncio.sleep(50)  # delay nhỏ trước khi gọi LLM
+                if hasattr(llm, "predict_async"):
+                    resp = await llm.predict_async(summary_prompt, max_tokens=4096)
+                    narrative = str(resp).strip()
+                        
+                else:
+                    resp = await asyncio.to_thread(llm.predict, summary_prompt)
+                    narrative = str(resp)
+                narrative_done = True
+                break
+            except Exception as e:
+                # kiểm tra nếu là quota exceeded
+                retry_sec = retry_delay = 10  # default
+                err_str = str(e)
+                import re
+                match = re.search(r"Please retry in (\d+\.?\d*)s", err_str)
+                if match:
+                    retry_sec = float(match.group(1))
+                    print(f"[ReportGenerator] Quota exceeded, waiting {retry_sec:.1f}s before retry")
+                else:
+                    print(f"[ReportGenerator] LLM call failed, attempt {attempt}/{max_retries}: {e}")
+                
+                narrative = f"[LLM Error attempt {attempt}] {e}"
+                await asyncio.sleep(retry_sec)
+
+        if not narrative_done:
+            narrative += " (LLM generation failed after retries)"
+
+    # --- CSS ---
+    css = """
+    body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.5; }
+    h1 { color: #2F4F4F; }
+    h2, h3 { color: #4B0082; }
+    table { border-collapse: collapse; width: 80%; margin-bottom: 20px; }
+    th, td { border: 1px solid #999; padding: 8px; text-align: left; }
+    th { background-color: #eee; }
+    ul { margin: 5px 0 15px 20px; }
+    img { margin: 10px 0; border: 1px solid #ccc; }
+    footer { margin-top: 30px; font-size: 0.8em; color: #555; }
+    """
+
+    # --- Build HTML ---
     html = f"""
 <html>
 <head>
     <meta charset="utf-8">
     <title>Báo cáo đề xuất giá bảo hiểm</title>
+    <style>{css}</style>
 </head>
 <body>
     <h1>📄 Báo cáo đề xuất giá bảo hiểm</h1>
 """
 
+    # --- NLU Section ---
     if sr:
-        html += f"<h2>Thông tin khách hàng</h2><pre>{sr.model_dump_json(indent=2)}</pre>"
+        html += "<h2>Thông tin khách hàng</h2>"
+        html += f"<p>Policy Type: {sr.policy_type}</p>"
+        customer = sr.customer_profile
+        html += f"<p>Age: {getattr(customer,'age','')}, Gender: {getattr(customer,'gender','')}, Location: {getattr(customer,'location','')}</p>"
+        html += f"<p>Benefits: {', '.join(sr.benefits)}</p>"
+        html += f"<p>Price Hint: {sr.price_hint}</p>"
+        html += f"<p>Priority: {sr.priority}</p>"
+
+    # --- Evaluator Section ---
     if ev:
-        html += f"<h2>Kết quả đánh giá</h2><pre>{ev.model_dump_json(indent=2)}</pre>"
+        html += "<h2>Kết quả đánh giá</h2>"
+        if ev.company:
+            html += f"<p>Product: {ev.company.name} ({ev.company.current_price:,} VND)</p>"
+            html += f"<p>Category: {ev.company.raw.get('category','')}, Duration: {ev.company.raw.get('duration_years','')} years, Eligibility: {ev.company.raw.get('eligibility','')}</p>"
+
+        html += f"<p>Recommended Price: {ev.recommended_price:,} VND</p>"
+        html += f"<p>Price Change: {ev.change_amount:+,} VND ({ev.change_pct:+.2f}%), Direction: {ev.price_direction}</p>"
+
+        if ev.rationale:
+            html += "<p>Lý do & Phân tích:</p><ul>"
+            for line in ev.rationale.split(". "):
+                if line.strip():
+                    html += f"<li>{line.strip()}</li>"
+            html += "</ul>"
+
+        if ev.assumptions:
+            html += "<p>Giả định:</p><ul>"
+            for a in ev.assumptions:
+                html += f"<li>{a}</li>"
+            html += "</ul>"
+
+        # Alternatives Table
+        if ev.alternatives:
+            html += "<h3>Scenario Alternatives</h3>"
+            html += "<table><tr><th>Action</th><th>Detail</th><th>Impact (VND)</th><th>Impact (%)</th></tr>"
+            for alt in ev.alternatives:
+                html += f"<tr><td>{getattr(alt,'action','')}</td><td>{getattr(alt,'detail','')}</td><td>{getattr(alt,'impact_currency',0):,}</td><td>{getattr(alt,'impact_pct',0):+.2f}%</td></tr>"
+            html += "</table>"
+
+        # Benefits Add/Remove
+        if ev.benefits_to_add or ev.benefits_to_remove:
+            html += "<h3>Benefit Adjustments</h3><ul>"
+            for b in ev.benefits_to_add:
+                html += f"<li>+ {b}</li>"
+            for b in ev.benefits_to_remove:
+                html += f"<li>- {b}</li>"
+            html += "</ul>"
+
+    # --- Visualizer Section ---
     if vis:
         html += "<h2>Biểu đồ & Dashboard</h2>"
-        if vis.price_chart_path:
-            html += f'<img src="{vis.price_chart_path}" width="500"><br>'
-        if vis.benefit_diff_chart_path:
-            html += f'<img src="{vis.benefit_diff_chart_path}" width="500"><br>'
+        for chart in ["price_chart_path", "benefit_diff_chart_path", "alternatives_chart_path"]:
+            path = getattr(vis, chart, None)
+            if path:
+                src_path = Path(path)
+                web_path = Path(path).as_posix() 
+                html += f'<img src="images/{src_path.name}" width="650"><br>'
 
-    html += f"<h2>Phân tích & Giải thích</h2><p>{narrative}</p>"
+    # --- Narrative Section ---
+    # Convert markdown -> HTML
+    narrative_html = markdown(narrative)
+    html += f"<h2>Phân tích & Giải thích</h2>{narrative_html}"
     html += f"<footer><small>Generated at {datetime.utcnow().isoformat()}</small></footer></body></html>"
 
-    # Save files
-    base_dir = "./outputs/reports"
+    # --- Save files ---
+    base_dir = "./outputs"
     os.makedirs(base_dir, exist_ok=True)
     ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     html_path = os.path.join(base_dir, f"report_{ts}.html")
     md_path = os.path.join(base_dir, f"report_{ts}.md")
-    pdf_path = os.path.join(base_dir, f"report_{ts}.pdf")
 
     try:
         with open(html_path, "w", encoding="utf-8") as f:
@@ -1276,20 +1481,20 @@ Viết nội dung giải thích tại sao giá đề xuất hợp lý và gợi 
     except Exception as e:
         print(f"[ReportGenerator] File write failed: {e}")
 
-    # PDF generation best-effort
-    pdf_file_path = None
+    # PDF generation if weasyprint available
+    pdf_path = None
     if WEASYPRINT_AVAILABLE:
         try:
             from weasyprint import HTML
+            pdf_path = os.path.join(base_dir, f"report_{ts}.pdf")
             HTML(string=html).write_pdf(pdf_path)
-            pdf_file_path = pdf_path
         except Exception as e:
             print(f"[ReportGenerator] WeasyPrint failed: {e}")
 
     return ReportArtifact(
-        report_html_path=f"sandbox:{html_path}" if os.path.exists(html_path) else None,
-        report_md_path=f"sandbox:{md_path}" if os.path.exists(md_path) else None,
-        report_pdf_path=f"sandbox:{pdf_file_path}" if pdf_file_path and os.path.exists(pdf_file_path) else None,
+        report_html_path=html_path if os.path.exists(html_path) else None,
+        report_md_path=md_path if os.path.exists(md_path) else None,
+        report_pdf_path=pdf_path if pdf_path and os.path.exists(pdf_path) else None,
         generated_at=datetime.utcnow().isoformat()
     ).model_dump()
 
@@ -1724,31 +1929,27 @@ def run_agent5(data_query: str = "", analysis_result: str = "", optimization_res
     agent_outputs = {}
     if analysis_result:
         try:
-            parsed = js.loads(analysis_result)
-            if isinstance(parsed, dict) and "policy_type" in parsed:
-                agent_outputs["NLU"] = {"structured_request": parsed}
-        except Exception:
+            agent_outputs["NLU"] = {"structured_request": analysis_result["structured_request"]}
+        except Exception as e:
+            print(e)
             pass
     if optimization_result:
         try:
-            parsed = js.loads(optimization_result)
-            if isinstance(parsed, dict):
-                agent_outputs["Evaluator"] = parsed
-        except Exception:
+            agent_outputs["Scraper"] = optimization_result
+        except Exception as e:
+            print(e)
             pass
     if additional_insights:
         try:
-            parsed = js.loads(additional_insights)
-            if isinstance(parsed, dict):
-                agent_outputs["MarketIntelligence"] = parsed
-        except Exception:
+            agent_outputs["RAG"] = additional_insights
+        except Exception as e:
+            print(e)
             pass
     if qa_result:
         try:
-            parsed = js.loads(qa_result)
-            if isinstance(parsed, dict):
-                agent_outputs["QA"] = parsed
-        except Exception:
+            agent_outputs["MarketIntelligence"] = qa_result
+        except Exception as e:
+            print(e)
             pass
 
     if not agent_outputs and data_query:
